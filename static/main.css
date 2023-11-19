@@ -1,0 +1,40 @@
+h1 {
+    text-align: center;
+}
+
+li {
+    margin-top: 20px;
+    margin-bottom: 20px;
+}
+
+button {
+    background-color: white;
+    height: 80px;
+    font-size: 30px;
+    width: 100%;
+}
+
+.completed {
+    text-decoration: line-through;
+    pointer-events: none;
+    background-color: #777;
+    color: #444;
+}
+
+/* Style for the tasks table */
+#tasksTable {
+    border-collapse: collapse;
+    width: 100%;
+  }
+  
+/* Style for table rows */
+#tasksTable tr {
+border-bottom: 1px solid #222; /* Adding lines between rows */
+}
+
+/* Style for table data cells */
+#tasksTable td {
+padding: 8px;
+text-align: center; /* Center-aligning text */
+}
+  
