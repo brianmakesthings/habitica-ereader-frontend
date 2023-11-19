@@ -126,7 +126,7 @@ async fn score_task(
 }
 
 fn task_due_today(repeat_schedule: RepeatSchedule, day_start_hour: i32) -> bool {
-    let current_date_with_offset = chrono::Local::today() - Duration::hours(day_start_hour.into());
+    let current_date_with_offset = chrono::Local::now() - Duration::hours(day_start_hour.into());
     let day_of_week = current_date_with_offset.weekday();
     match day_of_week {
         chrono::Weekday::Sun => repeat_schedule.su,
