@@ -35,6 +35,9 @@
 
     <script>
     function markComplete(task_id) {
+            var taskElement = document.getElementById(task_id);
+            taskElement.classList.remove("incomplete");
+            taskElement.classList.add("completed");
             var xhr = new XMLHttpRequest();
             xhr.open('POST', '/complete/' + task_id, true);
             xhr.setRequestHeader('Content-type', 'application/x-www-form-urlencoded');
@@ -46,8 +49,6 @@
                 }
             };
             xhr.send();
-            var taskElement = document.getElementById(task_id);
-            taskElement.classList.replace("incomplete", "completed");
         }
     
     
