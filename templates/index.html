@@ -47,7 +47,7 @@
             };
             xhr.send();
             var taskElement = document.getElementById(task_id);
-            taskElement.classList = ["completed"]
+            taskElement.classList.replace("incomplete", "completed");
         }
     
     
