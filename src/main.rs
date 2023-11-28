@@ -258,15 +258,16 @@ async fn main() -> Result<()> {
     };
 
     println!("{:?}", state);
+    println!("Current time: {}", chrono::Local::now());
 
     let router = Router::new()
         .route("/", routing::get(root))
-        .nest_service("/static", ServeDir::new("./static"))
         .route("/complete/:id", routing::post(clicked))
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
             authorization,
         ))
+        .nest_service("/static", ServeDir::new("./static"))
         .route("/api/login", routing::post(login))
         .route_service("/login", ServeFile::new("./static/login.html"))
         .with_state(state);
