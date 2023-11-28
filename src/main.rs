@@ -1,9 +1,12 @@
 use askama::Template;
 use axum::{
-    extract::Path,
-    response::{Html, IntoResponse},
-    routing, Router,
+    extract::{Path, State},
+    http::Request,
+    middleware::Next,
+    response::{Html, IntoResponse, Redirect},
+    routing, Form, Router,
 };
+use axum_extra::extract::{cookie::Cookie, CookieJar};
 use chrono::{prelude::*, Duration};
 use dotenv::dotenv;
 use error_chain::error_chain;
@@ -12,7 +15,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::env;
 use std::net::SocketAddr;
-use tower_http::services::ServeDir;
+use tower_http::services::{ServeDir, ServeFile};
 
 error_chain! {
     foreign_links {
@@ -23,24 +26,13 @@ error_chain! {
 
 #[derive(Deserialize)]
 struct TaskResponse {
-    success: bool,
     data: Vec<Task>,
-    #[serde(skip)]
-    notifications: String,
 }
 
 #[derive(Deserialize, Debug)]
 struct Task {
     _id: String,
-    #[serde(rename = "userId")]
-    user_id: String,
     text: String,
-    #[serde(rename = "type")]
-    task_type: String,
-    notes: String,
-    value: f32,
-    priority: f32,
-    attribute: String,
     repeat: Option<RepeatSchedule>,
     completed: bool,
 }
@@ -161,44 +153,125 @@ struct IndexTemplate {
     tasks: Vec<Task>,
 }
 
-async fn root() -> impl IntoResponse {
-    let env_variables = env::vars().collect::<HashMap<_, _>>();
-    let api_key = env_variables["HABITICA_API_KEY"].clone();
-    let user_id = env_variables["HABITICA_USER_ID"].clone();
-    let day_start_hour = get_day_start_hour(&api_key, &user_id).await;
-    let tasks = get_due_tasks(&api_key, &user_id, day_start_hour)
-        .await
-        .unwrap();
+async fn root(State(state): State<AppState>) -> impl IntoResponse {
+    let day_start_hour = get_day_start_hour(&state.habitica_api_key, &state.habitica_user_id).await;
+    let tasks = get_due_tasks(
+        &state.habitica_api_key,
+        &state.habitica_user_id,
+        day_start_hour,
+    )
+    .await
+    .unwrap();
     let index_html = IndexTemplate { tasks }.render().unwrap();
     (StatusCode::OK, Html(index_html).into_response())
 }
 
-async fn clicked(Path(task_id): Path<String>) {
+async fn clicked(State(state): State<AppState>, Path(task_id): Path<String>) {
     println!("clicked {task_id}!");
-    let env_variables = env::vars().collect::<HashMap<_, _>>();
-    let api_key = env_variables["HABITICA_API_KEY"].clone();
-    let user_id = env_variables["HABITICA_USER_ID"].clone();
+    score_task(
+        &state.habitica_api_key,
+        &state.habitica_user_id,
+        &task_id,
+        "up",
+    )
+    .await
+    .unwrap();
+}
 
-    score_task(&api_key, &user_id, &task_id, "up")
-        .await
-        .unwrap();
+#[derive(Deserialize)]
+struct Login {
+    username: String,
+    password: String,
+}
+
+async fn login(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Form(login): Form<Login>,
+) -> impl IntoResponse {
+    let cookie = jar.get("authorization_token");
+    if let Some(authz_token) = cookie {
+        if authz_token.value() == state.authz_token {
+            return (jar, Redirect::to("/"));
+        }
+    }
+
+    let form_username = login.username;
+    let form_password = login.password;
+    println!("{form_username}, {form_password}");
+
+    if form_username != state.username || form_password != state.password {
+        return (jar, Redirect::to("/login"));
+    }
+
+    println!("AUTHENTICATED!");
+
+    let built_cookie = Cookie::build("authorization_token", state.authz_token)
+        .path("/")
+        .secure(true)
+        .http_only(true)
+        .permanent()
+        .finish();
+
+    (jar.add(built_cookie), Redirect::to("/"))
+}
+
+async fn authorization<B>(
+    State(state): State<AppState>,
+    req: Request<B>,
+    next: Next<B>,
+) -> impl IntoResponse {
+    let headers = req.headers();
+    let jar = CookieJar::from_headers(headers);
+
+    let cookie = jar.get("authorization_token");
+    if let Some(authz_token) = cookie {
+        if authz_token.value() == state.authz_token {
+            println!("authorized!");
+            return next.run(req).await;
+        }
+    }
+
+    Redirect::to("/login").into_response()
+}
+
+#[derive(Clone, Debug)]
+struct AppState {
+    habitica_api_key: String,
+    habitica_user_id: String,
+    username: String,
+    password: String,
+    authz_token: String,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv().ok();
 
-    // let env_map: HashMap<_, _> = env::vars().collect();
-    // let api_key = env_map["HABITICA_API_KEY"].clone();
+    let env_map: HashMap<_, _> = env::vars().collect();
+    let state = AppState {
+        habitica_api_key: env_map["HABITICA_API_KEY"].clone(),
+        habitica_user_id: env_map["HABITICA_USER_ID"].clone(),
+        username: env_map["USERNAME"].clone(),
+        password: env_map["PASSWORD"].clone(),
+        authz_token: env_map["AUTHZ_TOKEN"].clone(),
+    };
 
-    // let serve_dir = ServeDir::new("assets").
+    println!("{:?}", state);
+
     let router = Router::new()
         .route("/", routing::get(root))
-        // .route("/force_refresh", routing::get(force_refresh))
         .nest_service("/static", ServeDir::new("./static"))
-        .route("/complete/:id", routing::post(clicked));
+        .route("/complete/:id", routing::post(clicked))
+        .route_layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            authorization,
+        ))
+        .route("/api/login", routing::post(login))
+        .route_service("/login", ServeFile::new("./static/login.html"))
+        .with_state(state);
 
-    let port = 3002;
+    let port = env_map["PORT"].parse().unwrap_or(3002);
     let address = SocketAddr::from(([0, 0, 0, 0], port));
 
     println!("Server started on {address}");
